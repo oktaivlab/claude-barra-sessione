@@ -2,5 +2,6 @@
   "name": "barra-sessione",
   "version": "0.1.1",
   "description": "Riga di stato in italiano sopra la casella: cache, contesto, limiti, token e costo, con il pulsante Handoff e il comando /token",
+  "license": "MIT",
   "types": "./types/index.d.ts"
 }

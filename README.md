@@ -34,3 +34,7 @@ Nell'app desktop, dove `/plugin` non funziona: clicca su + accanto alla casella 
 ```bash
 claude plugin test .
 ```
+
+## Licenza
+
+MIT: vedi il file [LICENSE](LICENSE).
