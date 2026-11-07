@@ -1,0 +1,11 @@
+{
+  "name": "claude-barra-sessione",
+  "owner": { "name": "OKTΛIV" },
+  "plugins": [
+    {
+      "name": "barra-sessione",
+      "source": "./",
+      "description": "Riga di stato in italiano sopra la casella dei messaggi: cache, contesto, limiti, token e costo, con il pulsante Handoff e il comando /token"
+    }
+  ]
+}
