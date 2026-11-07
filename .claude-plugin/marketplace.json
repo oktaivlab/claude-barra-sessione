@@ -1,6 +1,9 @@
 {
   "name": "claude-barra-sessione",
-  "owner": { "name": "OKTΛIV" },
+  "owner": {
+    "name": "OKTΛIV"
+  },
+  "description": "Mod per Claude Code: una riga di stato in italiano sopra la casella dei messaggi",
   "plugins": [
     {
       "name": "barra-sessione",
