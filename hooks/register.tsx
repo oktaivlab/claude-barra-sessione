@@ -39,6 +39,15 @@ function durata(ms: number): string {
   return `${Math.floor(h / 24)} g ${h % 24} h`
 }
 
+// La stessa durata senza spazi, per la barra stretta: 45m, 2h10, 3g4h.
+function durataCorta(ms: number): string {
+  const m = Math.max(0, Math.round(ms / MIN))
+  if (m < 60) return `${m}m`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h${String(m % 60).padStart(2, '0')}`
+  return `${Math.floor(h / 24)}g${h % 24}h`
+}
+
 function contoAllaRovescia(ms: number): string {
   const s = Math.max(0, Math.ceil(ms / 1000))
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
@@ -101,6 +110,7 @@ async function riepilogo($: EngineInterface) {
     const quando = Number.isFinite(reset) ? durata(reset) : null
     return {
       breve: `${nome} ${percento(l.percentUsed)}${quando ? ` · rinnovo ${quando}` : ''}`,
+      corto: `${nome} ${percento(l.percentUsed)}${quando ? ` (${durataCorta(reset)})` : ''}`,
       lungo: `${percento(l.percentUsed)} usato${quando ? `, si rinnova tra ${quando}` : ''}`,
     }
   }
@@ -109,14 +119,67 @@ async function riepilogo($: EngineInterface) {
 
   const costo = usage.cost ? dollari(usage.cost.usd) : 'n/d'
   const sessioneBreve = `Sessione ${breve(totale(t))} token · ${costo}`
+  const sessioneCorta = `${breve(totale(t))} tok · ${costo}`
+  const contestoCorto = usati === undefined ? 'Contesto —' : `Contesto ${percent ?? 0}%`
 
   return {
     cache: { colore: cacheColore, breve: cacheBreve, lungo: cacheLunga, ttl },
-    contesto: { breve: contestoBreve, lungo: contestoLungo },
+    contesto: { breve: contestoBreve, corto: contestoCorto, lungo: contestoLungo },
     cinqueOre,
     settimana,
-    sessione: { breve: sessioneBreve, tokens: t, costo },
+    sessione: { breve: sessioneBreve, corto: sessioneCorta, tokens: t, costo },
   }
+}
+
+// ── Impaginazione della riga ──────────────────────────────────────────────────
+type Voce = { testo: string; corto: string; colore?: Colore; isDim?: boolean }
+
+const SEP = 3 // " · " fra due voci della stessa riga
+const PULSANTE = 11 + 2 // "[ Handoff ]" più lo spazio che lo separa dal testo
+const RIGHE_MAX = 3
+
+// Mette le voci in righe larghe al più `larghezza`, senza mai spezzarne una:
+// così il separatore sta solo fra due voci della stessa riga.
+function inRighe(testi: readonly string[], larghezza: number): number[][] {
+  const righe: number[][] = []
+  let riga: number[] = []
+  let usate = 0
+  testi.forEach((t, i) => {
+    const serve = riga.length === 0 ? t.length : usate + SEP + t.length
+    if (riga.length > 0 && serve > larghezza) {
+      righe.push(riga)
+      riga = [i]
+      usate = t.length
+    } else {
+      riga.push(i)
+      usate = serve
+    }
+  })
+  if (riga.length > 0) righe.push(riga)
+  return righe
+}
+
+type Pagina = { isAccanto: boolean; isCorto: boolean; testi: string[]; righe: number[][]; altezza: number }
+
+// Sceglie dove va il pulsante (accanto al testo o sotto) e se servono le forme
+// corte delle voci: la prima disposizione che sta in RIGHE_MAX righe, nell'ordine
+// di preferenza; se nessuna ci sta, la più bassa, a pari altezza la più compatta.
+function impagina(voci: readonly Voce[], colonne: number): Pagina {
+  const prova = (isCorto: boolean, isAccanto: boolean): Pagina | null => {
+    const larghezza = isAccanto ? colonne - PULSANTE : colonne
+    const testi = voci.map(v => (isCorto ? v.corto : v.testo))
+    if (testi.some(t => t.length > larghezza)) return null
+    const righe = inRighe(testi, larghezza)
+    return { isAccanto, isCorto, testi, righe, altezza: isAccanto ? righe.length : righe.length + 1 }
+  }
+  const preferite = [prova(false, true), prova(true, true), prova(false, false), prova(true, false)]
+  const buona = preferite.find(p => p !== null && p.altezza <= RIGHE_MAX)
+  if (buona) return buona
+  const compatte = [prova(true, false), prova(true, true), prova(false, false), prova(false, true)]
+  let scelta: Pagina | null = null
+  for (const p of compatte) if (p && (!scelta || p.altezza < scelta.altezza)) scelta = p
+  // Più stretta di ogni voce corta: le voci vanno a capo da sole, una per riga.
+  return scelta ?? { isAccanto: false, isCorto: true, testi: voci.map(v => v.corto), righe: voci.map((_, i) => [i]), altezza: voci.length + 1 }
 }
 
 async function testoToken($: EngineInterface): Promise<string> {
@@ -212,43 +275,83 @@ export const register: Register = on => {
     const { Box, Text, Button } = $.ui.resolve(e)
     const [r, stadio] = await Promise.all([riepilogo($), read($, handoff)])
     const isWorking = e.props.isWorking
-    const sep = <Text dimColor>·</Text>
+    const voci: Voce[] = [
+      {
+        testo: r.cache.breve,
+        corto: r.cache.breve,
+        colore: r.cache.colore,
+        isDim: r.cache.colore === undefined,
+      },
+      { testo: r.contesto.breve, corto: r.contesto.corto },
+      { testo: r.cinqueOre?.breve ?? '5h n/d', corto: r.cinqueOre?.corto ?? '5h n/d' },
+      { testo: r.settimana?.breve ?? 'Sett. n/d', corto: r.settimana?.corto ?? 'Sett. n/d' },
+      { testo: r.sessione.breve, corto: r.sessione.corto },
+    ]
+    const pagina = impagina(voci, e.props.bodyColumns)
 
-    // Il testo va a capo nella sua colonna a sinistra; il pulsante resta a destra,
-    // fuori dal flusso del testo, così sull'app (dove i pulsanti sono più alti di
-    // una riga di testo) non copre le righe sopra e sotto. Il pulsante Replay lo
-    // disegna già la mod replay-theater nella sua riga: qui non lo ripetiamo.
+    // Ogni riga contiene voci intere, con il punto solo fra due voci: in una
+    // finestra stretta nessuna voce si spezza e nessun punto resta da solo.
+    // Ogni riga può comunque andare a capo, se l'app misura il testo più largo.
+    const testo = (
+      <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+        {pagina.righe.map((riga, n) => (
+          <Box key={`riga-${n}`} flexDirection="row" flexWrap="wrap" columnGap={1}>
+            {riga.flatMap((i, k) => {
+              const v = voci[i]
+              if (!v) return []
+              const parte = (
+                <Text key={`voce-${i}`} color={v.colore} dimColor={v.isDim}>
+                  {pagina.testi[i]}
+                </Text>
+              )
+              return k === 0
+                ? [parte]
+                : [
+                    <Text key={`sep-${i}`} dimColor>
+                      ·
+                    </Text>,
+                    parte,
+                  ]
+            })}
+          </Box>
+        ))}
+      </Box>
+    )
+
+    // Il pulsante sta fuori dal flusso del testo, così sull'app (dove i pulsanti
+    // sono più alti di una riga di testo) non copre le righe vicine: a destra
+    // quando c'è spazio, sotto il testo quando la finestra è stretta. Il pulsante
+    // Replay lo disegna già la mod replay-theater: qui non lo ripetiamo.
+    const pulsante = (
+      <Box flexShrink={0}>
+        <Button
+          key="handoff"
+          label={stadio === 'in-corso' ? 'Handoff…' : 'Handoff'}
+          dimColor={isWorking || stadio === 'in-corso'}
+          onPress={() => {
+            if (isWorking) {
+              $.ui.toast('Aspetta la fine del turno, poi premi Handoff')
+              return
+            }
+            $.clock.after(1, () => void eseguiHandoff($))
+          }}
+        />
+      </Box>
+    )
+
     return (
       <Box flexDirection="column" rowGap="sm">
-        <Box flexDirection="row" alignItems="center" columnGap={2}>
-          <Box flexDirection="row" flexWrap="wrap" columnGap={1} flexGrow={1} flexShrink={1}>
-            <Text color={r.cache.colore} dimColor={r.cache.colore === undefined}>
-              {r.cache.breve}
-            </Text>
-            {sep}
-            <Text>{r.contesto.breve}</Text>
-            {sep}
-            <Text>{r.cinqueOre?.breve ?? '5h n/d'}</Text>
-            {sep}
-            <Text>{r.settimana?.breve ?? 'Sett. n/d'}</Text>
-            {sep}
-            <Text>{r.sessione.breve}</Text>
+        {pagina.isAccanto ? (
+          <Box flexDirection="row" alignItems="center" columnGap={2}>
+            {testo}
+            {pulsante}
           </Box>
-          <Box flexShrink={0}>
-            <Button
-              key="handoff"
-              label={stadio === 'in-corso' ? 'Handoff…' : 'Handoff'}
-              dimColor={isWorking || stadio === 'in-corso'}
-              onPress={() => {
-                if (isWorking) {
-                  $.ui.toast('Aspetta la fine del turno, poi premi Handoff')
-                  return
-                }
-                $.clock.after(1, () => void eseguiHandoff($))
-              }}
-            />
+        ) : (
+          <Box flexDirection="column" rowGap="sm">
+            {testo}
+            {pulsante}
           </Box>
-        </Box>
+        )}
         {below}
       </Box>
     )

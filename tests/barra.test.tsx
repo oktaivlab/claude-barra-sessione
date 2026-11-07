@@ -55,6 +55,27 @@ test('la riga mostra cache, contesto, limiti e costo, e lascia vedere ciò che s
   }
 })
 
+test('in una finestra stretta le voci passano alla forma corta e il pulsante resta', async ($, on) => {
+  SOTTO(on)
+  on('session.usage', () => ({ value: USO }))
+  on('clock.now', () => ({ value: ADESSO }))
+  on('state.get', { key: 'lastRequestAt' }, () => ({
+    value: { value: ADESSO - 10 * 60_000, version: 1 },
+  }))
+
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ ...BAND, surface, props: { ...BAND.props, bodyColumns: 34 } })
+    expect((await ui.find({ type: 'Text', text: /^Cache/ }))?.text).toBe('Cache 50:00')
+    expect((await ui.find({ type: 'Text', text: /^Contesto/ }))?.text).toBe('Contesto 42%')
+    expect((await ui.find({ type: 'Text', text: /^5h/ }))?.text).toBe('5h 23% (2h10)')
+    expect((await ui.find({ type: 'Text', text: /^Sett/ }))?.text).toBe('Sett. 61,5% (3g4h)')
+    expect((await ui.find({ type: 'Text', text: /tok · / }))?.text).toBe('0 tok · $3,46')
+    expect(await ui.find({ key: 'handoff' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^next:/ })).toBeDefined()
+    await ui.unmount()
+  }
+})
+
 test('con la chiave API la cache dura 5 minuti e diventa rossa', async ($, on) => {
   SOTTO(on)
   on('session.usage', () => ({ value: { ...USO, rateLimits: [] } }))
